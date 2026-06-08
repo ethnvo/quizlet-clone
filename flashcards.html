@@ -109,11 +109,14 @@
 
   /* facts page */
   .facts-intro { color: var(--muted); font-size: 14px; line-height: 1.6; margin-bottom: 22px; }
-  .facts-sec { margin-bottom: 28px; }
-  .facts-sec h3 { font-size: 15px; margin-bottom: 12px; }
+  .facts-sec { margin-bottom: 30px; }
+  .facts-sec h3 { font-size: 17px; margin-bottom: 6px; }
+  .topic-desc { color: var(--muted); font-size: 14px; line-height: 1.55; margin-bottom: 12px; }
   .fact { background: var(--card-2); border-left: 4px solid var(--muted); border-radius: 8px; padding: 12px 16px; margin-bottom: 10px; line-height: 1.5; font-size: 15px; }
   .fact.t { border-left-color: var(--good); }
   .fact.f { border-left-color: var(--bad); }
+  .fact-term { font-weight: 700; margin-bottom: 4px; }
+  .fact-def { color: var(--muted); }
   .fact .corr { display: block; margin-top: 6px; color: var(--accent); font-size: 13px; }
   .quiz-foot { margin-top: 18px; display: flex; justify-content: space-between; align-items: center; }
   .score { color: var(--muted); font-size: 14px; }
@@ -140,6 +143,9 @@
   .verdict .ans { margin-top: 8px; }
   .verdict .ans b { color: var(--accent); }
   .verdict .yours { margin-top: 6px; color: var(--muted); font-size: 14px; }
+  .explain { background: rgba(255,205,31,.1); border: 1px solid rgba(255,205,31,.45); border-radius: 12px; padding: 16px 18px; margin-top: 14px; line-height: 1.55; }
+  .explain .tag { color: var(--accent); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; display: block; margin-bottom: 8px; }
+  .explain b { color: var(--accent); }
 
   .stage { display: inline-block; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; padding: 4px 12px; border-radius: 999px; background: var(--card-2); color: var(--accent); }
   .breakdown { color: var(--muted); font-size: 13px; margin: -6px 0 16px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
@@ -158,7 +164,8 @@
     <h1><span class="dot">●</span> Viz Flashcards</h1>
     <div class="sub" id="deckinfo"></div>
     <div class="tabs">
-      <div class="tab active" data-mode="cards">🃏 Flashcards</div>
+      <div class="tab active" data-mode="marathon">🔥 Marathon</div>
+      <div class="tab" data-mode="cards">🃏 Flashcards</div>
       <div class="tab" data-mode="learn">🧠 Learn</div>
       <div class="tab" data-mode="quiz">✅ Quiz</div>
       <div class="tab" data-mode="write">✍️ Write</div>
@@ -305,7 +312,7 @@ function shuffle(a) {
 let cards = toCards(DEFAULT_CSV);
 let order = cards.map((_, i) => i);
 let idx = 0;
-let mode = "cards";
+let mode = "marathon";
 const app = document.getElementById("app");
 document.getElementById("deckinfo").textContent = cards.length + " cards loaded";
 
@@ -371,6 +378,36 @@ function boolVerdict(def) {
 function boolCorrection(def) {
   return String(def).trim().replace(/^(true|false)\b[\s:,.\-–—]*/i, "").trim();
 }
+function cleanTerm(term) {
+  return String(term).trim().replace(/[.?\s]+$/, "");
+}
+function isQuestionTerm(term) {
+  return /\?\s*$/.test(String(term).trim());
+}
+function questionPrompt(card, mode) {
+  const term = String(card.term).trim();
+  if (isQuestionTerm(term)) return term;
+
+  const cleaned = cleanTerm(term);
+  const verdict = boolVerdict(card.definition);
+  if (verdict) return `True or false: ${cleaned}`;
+
+  if (/^to visualize\b/i.test(cleaned)) {
+    return `In information visualization, which choices are used ${cleaned}?`;
+  }
+  if (/^visualizing\b/i.test(cleaned)) {
+    return `In information visualization, which method is useful for ${cleaned}?`;
+  }
+  if (/^for\b/i.test(cleaned)) {
+    return mode === "write" || mode === "exam-write"
+      ? `In information visualization, explain what you would use ${cleaned}.`
+      : `In information visualization, which answer best fits ${cleaned}?`;
+  }
+
+  return mode === "write" || mode === "exam-write"
+    ? `In information visualization, explain what "${cleaned}" means or when it is used.`
+    : `In information visualization, which answer best explains "${cleaned}"?`;
+}
 // If a definition is a short comma-list ("a, b, c"), return its items; else null.
 function splitList(def) {
   if (boolVerdict(def)) return null;
@@ -380,6 +417,496 @@ function splitList(def) {
   if (items.length < 3) return null;                 // need a real list
   if (items.some(it => it.split(/\s+/).length > 4)) return null; // items must be short noun phrases
   return items;
+}
+
+const DIFFICULTY_TOPICS = [
+  ["definition adopted", "exploratory", "explanatory", "quality", "numerical", "categorical", "gestalt", "focus", "elimainate"],
+  ["scale", "coordinate", "cartesian", "axis", "axes", "color", "qualitative", "sequential", "accent", "divergent", "polar", "log", "square-root"],
+  ["amount", "heatmap", "bar", "bars", "pie", "proportion", "stacked", "grouped"],
+  ["distribution", "histogram", "density", "boxplot", "box plot", "violin", "strip", "sina", "sinaplot", "ridgeline", "rigeline", "cumulative", "quantile", "jitter"],
+  ["quantitative", "scatter", "bubble", "correlation", "correlogram", "association", "relations", "variables"],
+  ["time", "series", "line graph", "slope", "pair", "paired"],
+  ["dimension", "component", "pca", "geospatial", "map", "choropleth", "cartogram", "projection", "conformal", "longitude", "latitude", "altitude", "parallel set", "mosaic", "treemap"]
+];
+
+function difficultyRank(card) {
+  const text = `${card.term} ${card.definition}`.toLowerCase();
+  let band = DIFFICULTY_TOPICS.findIndex(keywords => keywords.some(keyword => text.includes(keyword)));
+  if (band < 0) band = DIFFICULTY_TOPICS.length;
+
+  let complexity = 0;
+  if (boolVerdict(card.definition)) complexity += 1;
+  if (splitList(card.definition)) complexity += 2;
+  complexity += Math.min(8, tokenize(card.definition).size) / 10;
+  if (/dimension|component|pca|projection|cartogram|parallel set|mosaic|treemap/i.test(text)) complexity += 3;
+  return band * 100 + complexity;
+}
+
+function orderedCardIndexes() {
+  return cards
+    .map((card, index) => ({ index, rank: difficultyRank(card) }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map(item => item.index);
+}
+
+function mcq(prompt, answer, distractors) {
+  return {
+    kind: "mcq",
+    prompt,
+    answer,
+    options: [
+      { text: answer, correct: true },
+      ...distractors.map(text => ({ text, correct: false }))
+    ]
+  };
+}
+
+function written(prompt, answer) {
+  return { kind: "write", prompt, answer };
+}
+
+const EXAM_BANK = [
+  mcq(
+    "What is the main purpose of information visualization in this course?",
+    "To help humans understand, manipulate, and communicate data.",
+    [
+      "To make every dataset look visually impressive.",
+      "To replace statistical analysis with pictures.",
+      "To remove the need for interpretation."
+    ]
+  ),
+  mcq(
+    "Why do we use exploratory analysis?",
+    "To develop an understanding of the data before making claims.",
+    [
+      "To present final findings to a broad audience.",
+      "To prove the first hypothesis is correct.",
+      "To choose colors before looking at the data."
+    ]
+  ),
+  mcq(
+    "What is explanatory analysis mainly for?",
+    "Communicating data-driven findings to an audience.",
+    [
+      "Privately discovering what variables exist.",
+      "Randomly testing chart types.",
+      "Removing all context from a visualization."
+    ]
+  ),
+  mcq(
+    "Which three qualities should a strong visualization have?",
+    "It should be aesthetic, clear, and correct.",
+    [
+      "It should be complex, colorful, and surprising.",
+      "It should be animated, dense, and decorative.",
+      "It should be short, circular, and symmetrical."
+    ]
+  ),
+  mcq(
+    "Which example is numerical continuous data?",
+    "Temperature.",
+    ["Animal type.", "Coffee size.", "A true/false label."]
+  ),
+  mcq(
+    "Which example is categorical ordinal data?",
+    "Coffee sizes, because they have an order.",
+    ["Types of animals.", "Temperature readings.", "Correlation coefficients."]
+  ),
+  written(
+    "Explain the difference between exploratory and explanatory analysis.",
+    "Exploratory analysis is for understanding the data; explanatory analysis is for communicating findings to an audience."
+  ),
+  mcq(
+    "What does the Gestalt principle of similarity say?",
+    "We tend to group things that look similar.",
+    [
+      "We ignore things that are close together.",
+      "We always read larger shapes first.",
+      "We compare every visual mark independently."
+    ]
+  ),
+  mcq(
+    "What do scales do in visualization?",
+    "They map data values onto visual aesthetics.",
+    [
+      "They decide the story before the data is shown.",
+      "They remove the need for axes.",
+      "They guarantee that every chart is unbiased."
+    ]
+  ),
+  mcq(
+    "When should a log scale be considered?",
+    "When data are highly skewed or involve multiplicative factors.",
+    [
+      "Whenever the chart uses color.",
+      "Only when all values are negative.",
+      "When categories need to be alphabetized."
+    ]
+  ),
+  mcq(
+    "What is a weakness of square-root scales?",
+    "Their grid spacing can be less clear than scales like log scales.",
+    [
+      "They can only display categorical variables.",
+      "They always make small values disappear.",
+      "They require polar coordinates."
+    ]
+  ),
+  mcq(
+    "What does a coordinate system define?",
+    "Where data values are located in the visual representation.",
+    [
+      "Which dataset should be collected.",
+      "Whether a chart is persuasive.",
+      "The title and caption of a figure."
+    ]
+  ),
+  mcq(
+    "When axes use the same units in a Cartesian coordinate system, what aspect ratio is usually required?",
+    "A one-to-one aspect ratio.",
+    [
+      "Any arbitrary aspect ratio.",
+      "A polar aspect ratio.",
+      "A stacked aspect ratio."
+    ]
+  ),
+  mcq(
+    "What kind of data fits polar coordinates well?",
+    "Periodic patterns or angular data.",
+    [
+      "Nominal categories with no order.",
+      "A single binary true/false variable.",
+      "Any table with missing values."
+    ]
+  ),
+  mcq(
+    "Why are colors useful in visualizations?",
+    "They can distinguish groups, highlight values, and encode extra dimensions.",
+    [
+      "They make scale choices unnecessary.",
+      "They always increase accuracy.",
+      "They replace labels and legends."
+    ]
+  ),
+  mcq(
+    "Which set lists common color scale types?",
+    "Qualitative, sequential, accent, and divergent.",
+    [
+      "Cartesian, polar, stacked, and jittered.",
+      "Histogram, density, violin, and strip.",
+      "Nominal, ordinal, discrete, and paired."
+    ]
+  ),
+  written(
+    "Explain why a qualitative color scale should not have unlimited colors.",
+    "Too many qualitative colors become hard to distinguish, so the audience cannot reliably separate categories."
+  ),
+  mcq(
+    "Which charts are good for visualizing amounts?",
+    "Heatmaps, bar plots, stacked bars, and dot plots.",
+    [
+      "Only pie charts and maps.",
+      "Only density plots and violin plots.",
+      "Only correlograms and PCA plots."
+    ]
+  ),
+  mcq(
+    "When are stacked bars useful?",
+    "When the sum of the amounts conveys meaningful information.",
+    [
+      "When the total is meaningless.",
+      "When there is only one category.",
+      "When exact individual values must be hidden."
+    ]
+  ),
+  mcq(
+    "When should heatmaps be used?",
+    "For large amounts of data with at least two categories and one continuous value.",
+    [
+      "For a single number with no categories.",
+      "Only for time series data.",
+      "Only when every value is true or false."
+    ]
+  ),
+  mcq(
+    "What limitation do bar charts usually have?",
+    "They need to start at a baseline of zero.",
+    [
+      "They cannot show categories.",
+      "They require a circular coordinate system.",
+      "They only work for geospatial data."
+    ]
+  ),
+  mcq(
+    "Why are bar charts often easy for audiences?",
+    "They are common, so they have less of a learning curve.",
+    [
+      "They are always more accurate than every other chart.",
+      "They work without labels.",
+      "They make distributions invisible."
+    ]
+  ),
+  mcq(
+    "What is a weakness of pie charts?",
+    "They are space-inefficient and can be hard to compare precisely.",
+    [
+      "They require two quantitative variables.",
+      "They cannot show proportions.",
+      "They are the best choice for large tables."
+    ]
+  ),
+  mcq(
+    "When do grouped bars work best?",
+    "When the number of conditions is moderate.",
+    [
+      "When there are hundreds of conditions.",
+      "When no category has an order.",
+      "When comparing map projections."
+    ]
+  ),
+  mcq(
+    "What can stacked densities show?",
+    "How proportions change along a continuous variable.",
+    [
+      "Where latitude and longitude are located.",
+      "Whether axes use the same units.",
+      "The exact count of every raw observation."
+    ]
+  ),
+  mcq(
+    "Which tool is appropriate for nested proportions when every level can combine with every other level?",
+    "Mosaic plots.",
+    ["Treemaps.", "Correlograms.", "Connected scatterplots."]
+  ),
+  written(
+    "Explain when a treemap is more appropriate than a mosaic plot.",
+    "A treemap is better when subdivisions of one group are entirely distinct rather than every level combining with every other level."
+  ),
+  mcq(
+    "Why do we visualize distributions?",
+    "To see the relative frequency, shape, and spread of measurements.",
+    [
+      "To replace all numerical summaries.",
+      "To force data into categories.",
+      "To show only geographic location."
+    ]
+  ),
+  mcq(
+    "What is one problem with histograms and density plots?",
+    "They depend on user-selected parameters.",
+    [
+      "They cannot show numerical data.",
+      "They require two categorical variables.",
+      "They always show every raw data point."
+    ]
+  ),
+  mcq(
+    "Which statement about histograms is correct?",
+    "They use numerical variables on the x-axis and should not have spaces between bins.",
+    [
+      "Their bars can always be reordered freely.",
+      "They are only for categorical variables.",
+      "They require longitude and latitude."
+    ]
+  ),
+  mcq(
+    "Why are ECDFs and quantile-quantile plots considered faithful but less common?",
+    "They avoid many arbitrary choices but are harder to interpret.",
+    [
+      "They are decorative but inaccurate.",
+      "They only work for true/false values.",
+      "They are always easier than histograms."
+    ]
+  ),
+  mcq(
+    "When are boxplots, violins, strip charts, and sina plots useful?",
+    "When comparing many distributions and looking for overall shifts.",
+    [
+      "When displaying longitude and latitude.",
+      "When only one raw number exists.",
+      "When the main task is color selection."
+    ]
+  ),
+  mcq(
+    "What do box plots do well and poorly?",
+    "They are simple to read and draw, but they hide information.",
+    [
+      "They show every individual observation perfectly.",
+      "They are only used for maps.",
+      "They cannot compare distributions."
+    ]
+  ),
+  mcq(
+    "What is jitter in a strip chart?",
+    "Moving points slightly along the x-axis to reduce overlap.",
+    [
+      "Changing the chart into a map.",
+      "Removing all outliers.",
+      "Sorting categories by color."
+    ]
+  ),
+  mcq(
+    "What is a sina plot?",
+    "A combination of a violin plot and a strip chart.",
+    [
+      "A heatmap with one category.",
+      "A pie chart with jitter.",
+      "A line chart for angular data."
+    ]
+  ),
+  mcq(
+    "When are ridgeline plots useful?",
+    "For many distributions or changes in distributions over time.",
+    [
+      "For one binary variable only.",
+      "For exact map boundaries.",
+      "For choosing a baseline of zero."
+    ]
+  ),
+  written(
+    "Explain why histograms can be friendly to the general public but still imperfect.",
+    "They are familiar and easy to read, but their appearance depends on parameter choices such as bin width."
+  ),
+  mcq(
+    "When is it beneficial to visualize relationships between variables?",
+    "When a dataset contains two or more quantitative variables.",
+    [
+      "When every variable is a label only.",
+      "When no measurements exist.",
+      "Only when categories are alphabetical."
+    ]
+  ),
+  mcq(
+    "What is the standard plot for two quantitative variables?",
+    "A scatter plot.",
+    ["A pie chart.", "A treemap.", "A mosaic plot."]
+  ),
+  mcq(
+    "What are bubble charts?",
+    "Scatter plots where point size represents another quantitative variable.",
+    [
+      "Bar charts with circular axes.",
+      "Maps with distorted geography.",
+      "Histograms with no bins."
+    ]
+  ),
+  mcq(
+    "What is a common way to quantify association between pairs of variables?",
+    "Correlation coefficients.",
+    ["Coffee sizes.", "Color palettes.", "Baseline zero."]
+  ),
+  mcq(
+    "What are correlograms used for?",
+    "Visualizing correlation coefficients.",
+    [
+      "Showing nested proportions.",
+      "Displaying periodic angular data.",
+      "Choosing histogram bin width."
+    ]
+  ),
+  mcq(
+    "If x is time and y is a quantitative measurement, which chart is usually most appropriate?",
+    "A line graph.",
+    ["A pie chart.", "A mosaic plot.", "A qualitative color scale."]
+  ),
+  written(
+    "Explain why time imposes structure on data.",
+    "Time gives observations a natural order, so charts should preserve and communicate that sequence."
+  ),
+  mcq(
+    "What is paired data?",
+    "Two or more measurements of the same quantity under slightly different conditions.",
+    [
+      "Two unrelated categorical labels.",
+      "Any data drawn on a map.",
+      "A single measurement repeated as a color."
+    ]
+  ),
+  mcq(
+    "What reference line helps compare paired measurements?",
+    "A line marking x = y.",
+    ["A baseline at zero.", "A color legend only.", "A one-dimensional histogram."]
+  ),
+  mcq(
+    "What is dimensionality reduction trying to do?",
+    "Find a low-dimensional representation without losing critical information.",
+    [
+      "Turn all variables into categories.",
+      "Remove all quantitative variables.",
+      "Make every chart use a map."
+    ]
+  ),
+  mcq(
+    "What is Principal Component Analysis used for?",
+    "Performing dimensionality reduction.",
+    [
+      "Choosing qualitative color palettes.",
+      "Starting bar charts at zero.",
+      "Adding jitter to strip charts."
+    ]
+  ),
+  mcq(
+    "Which visualizations are common for geospatial data?",
+    "Maps, choropleths, cartograms, and cartogram heatmaps.",
+    [
+      "Only box plots and violins.",
+      "Only correlograms and bubble charts.",
+      "Only grouped bars and pie charts."
+    ]
+  ),
+  mcq(
+    "What do map projections need as location inputs?",
+    "Longitude, latitude, and sometimes altitude.",
+    [
+      "Only color and shape.",
+      "Only true and false labels.",
+      "Only histogram bins."
+    ]
+  ),
+  mcq(
+    "What is the main challenge with projections?",
+    "They always introduce some type of distortion.",
+    [
+      "They make all values categorical.",
+      "They remove the need for coordinates.",
+      "They only work for bar charts."
+    ]
+  ),
+  mcq(
+    "What should you remember about cartograms?",
+    "They are not necessarily geographically accurate.",
+    [
+      "They always preserve exact physical area.",
+      "They cannot encode data values.",
+      "They are the same as histograms."
+    ]
+  ),
+  written(
+    "Explain why map-based visualizations need extra care.",
+    "Maps depend on projections and geography, so they can introduce distortion while also encoding data values."
+  )
+];
+
+function looseKey(text) {
+  return String(text).toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function curatedOptionsForCard(card) {
+  if (boolVerdict(card.definition)) return [];
+  const term = cleanTerm(card.term).toLowerCase();
+  const answerKey = looseKey(card.definition);
+  const match = EXAM_BANK.find(item => {
+    if (item.kind !== "mcq" || !item.options) return false;
+    const prompt = item.prompt.toLowerCase();
+    const itemAnswerKey = looseKey(item.answer);
+    return (
+      (term.length >= 4 && prompt.includes(term)) ||
+      itemAnswerKey === answerKey ||
+      itemAnswerKey.includes(answerKey) ||
+      answerKey.includes(itemAnswerKey)
+    );
+  });
+  return match ? match.options.map(option => ({ ...option })) : [];
 }
 
 let listPool = [];   // unique items pooled from every list-style card, for SATA distractors
@@ -404,7 +931,7 @@ function pickDistractors(ci, n) {
 }
 
 function buildQuiz() {
-  quizOrder = shuffle(cards.map((_, i) => i));
+  quizOrder = orderedCardIndexes();
   quizIdx = 0; score = 0; answered = false;
   tokenSets = cards.map(c => tokenize(c.definition));
   // pool of unique list items across the deck (for select-all distractors)
@@ -438,8 +965,11 @@ function renderQuiz() {
 
   // Otherwise single-choice: real True/False, or smart distractors.
   const verdict = boolVerdict(correct.definition);
+  const curated = curatedOptionsForCard(correct);
   let opts;
-  if (verdict) {
+  if (curated.length) {
+    opts = shuffle(curated);
+  } else if (verdict) {
     opts = shuffle([{ text: "True", correct: verdict === "true" }, { text: "False", correct: verdict === "false" }]);
   } else {
     const distract = pickDistractors(ci, 3);
@@ -450,7 +980,7 @@ function renderQuiz() {
   }
 
   app.innerHTML = quizHead() + `
-    <div class="quiz-q">${esc(correct.term)}</div>
+    <div class="quiz-q">${esc(questionPrompt(correct, "quiz"))}</div>
     <div class="options">
       ${opts.map(o => `<button class="opt" data-c="${o.correct ? 1 : 0}">${esc(o.text)}</button>`).join("")}
     </div>
@@ -482,7 +1012,7 @@ function renderSATA(ci, correct, items) {
     ...distract.map(t => ({ text: t, correct: false })),
   ]);
   app.innerHTML = quizHead() + `
-    <div class="quiz-q">${esc(correct.term)}</div>
+    <div class="quiz-q">${esc(questionPrompt(correct, "quiz"))}</div>
     <div class="sata-hint">☑ Select ALL that apply (${items.length} correct)</div>
     <div class="options">
       ${opts.map(o => `<button class="opt" data-c="${o.correct ? 1 : 0}">${esc(o.text)}</button>`).join("")}
@@ -513,7 +1043,7 @@ function renderSATA(ci, correct, items) {
 
 // ---- WRITE / RECALL ----
 let writeOrder = [], writeIdx = 0, writeScore = 0, writeDone = false;
-function buildWrite() { writeOrder = shuffle(cards.map((_, i) => i)); writeIdx = 0; writeScore = 0; writeDone = false; }
+function buildWrite() { writeOrder = orderedCardIndexes(); writeIdx = 0; writeScore = 0; writeDone = false; }
 
 function normalize(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
@@ -567,7 +1097,7 @@ function renderWrite() {
   app.innerHTML = `
     <div class="progress"><div style="width:${(writeIdx / writeOrder.length) * 100}%"></div></div>
     <div class="counter"><span>${writeIdx + 1} / ${writeOrder.length}</span><span class="score">Score: ${writeScore}</span></div>
-    <div class="write-q">${esc(c.term)}</div>
+    <div class="write-q">${esc(questionPrompt(c, "write"))}</div>
     <textarea class="write-in" id="ans" placeholder="Type the answer, then Enter to check (Shift+Enter for newline)"></textarea>
     <div id="result"></div>
     <div class="quiz-foot"><span></span><button class="btn" id="act">Check</button></div>`;
@@ -616,6 +1146,475 @@ function renderWrite() {
   });
   // allow Enter on the button after checking
   act.addEventListener("keydown", e => { if (e.key === "Enter" && checked) { e.preventDefault(); next(); } });
+}
+
+// ---- MARATHON (ULTIMATE difficulty-ordered active recall grind) ----
+var examQuestions = [];
+let examIdx = 0, examScore = 0, examAnswered = false;
+
+function examKey() {
+  return deckKey().replace("vizflash_learn_", "vizflash_marathon_v2_");
+}
+
+function saveExamProgress() {
+  try {
+    localStorage.setItem(examKey(), JSON.stringify({
+      idx: examIdx,
+      score: examScore,
+      questions: examQuestions
+    }));
+  } catch (e) {}
+}
+
+function loadExamProgress() {
+  try {
+    const raw = localStorage.getItem(examKey());
+    if (!raw) return false;
+    const saved = JSON.parse(raw);
+    if (!saved || !Array.isArray(saved.questions) || !saved.questions.length) return false;
+    examQuestions = saved.questions.map(normalizeSavedExamQuestion);
+    examIdx = Math.max(0, Math.min(Number(saved.idx) || 0, examQuestions.length));
+    examScore = Number(saved.score) || 0;
+    examAnswered = false;
+    saveExamProgress();
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function resetExamProgress() {
+  try { localStorage.removeItem(examKey()); } catch (e) {}
+  buildExam();
+  renderExam();
+}
+
+function confirmResetExamProgress() {
+  if (!confirm("Reset Marathon from question 1? This clears your saved Marathon progress.")) return;
+  resetExamProgress();
+}
+
+function buildExam() {
+  tokenSets = cards.map(c => tokenize(c.definition));
+  listPool = [];
+  const seen = new Set();
+  cards.forEach(c => {
+    const items = splitList(c.definition);
+    if (items) items.forEach(x => {
+      const key = x.toLowerCase();
+      if (!seen.has(key)) { seen.add(key); listPool.push(x); }
+    });
+  });
+
+  const curatedQuestions = EXAM_BANK.map((item, position) => ({
+    index: -1,
+    card: { term: "Marathon item", definition: item.answer },
+    kind: item.kind,
+    prompt: item.prompt,
+    options: item.options ? item.options.slice() : null,
+    rank: position,
+    points: null,
+    response: null
+  }));
+
+  const generatedQuestions = orderedCardIndexes().map((ci, position) => {
+    const card = cards[ci];
+    const canWrite = !boolVerdict(card.definition) && !splitList(card.definition);
+    const kind = canWrite && position % 3 === 1 ? "write" : "mcq";
+    return {
+      index: ci,
+      card,
+      kind,
+      prompt: questionPrompt(card, kind === "write" ? "exam-write" : "quiz"),
+      options: null,
+      rank: EXAM_BANK.length + position,
+      points: null,
+      response: null
+    };
+  });
+  examQuestions = curatedQuestions.concat(generatedQuestions);
+
+  if (!examQuestions.some(q => q.kind === "write")) {
+    const fallback = examQuestions.find(q => !boolVerdict(q.card.definition) && !splitList(q.card.definition));
+    if (fallback) {
+      fallback.kind = "write";
+      fallback.prompt = questionPrompt(fallback.card, "exam-write");
+    }
+  }
+
+  examIdx = 0; examScore = 0; examAnswered = false;
+  loadExamProgress();
+}
+
+function shouldUseExamSelectAll(q) {
+  const items = splitList(q.card.definition);
+  return !q.options && q.kind === "mcq" && items && listPool.length >= items.length + 2;
+}
+
+function recordExamPoints(q, points) {
+  const previous = typeof q.points === "number" ? q.points : 0;
+  q.points = points;
+  examScore += points - previous;
+  saveExamProgress();
+}
+
+function hasExamAnswer(q) {
+  return typeof q.points === "number";
+}
+
+function recordExamResponse(q, response) {
+  q.response = response;
+  saveExamProgress();
+}
+
+function currentExamScore() {
+  return examScore;
+}
+
+function currentExamIndex() {
+  return examIdx;
+}
+
+function examCanGoBack() {
+  return examIdx > 0;
+}
+
+function goExamBack() {
+  if (examIdx > 0) {
+    examIdx--;
+    examAnswered = false;
+    saveExamProgress();
+    renderExam();
+  }
+}
+
+function goExamForward() {
+  if (examIdx < examQuestions.length) {
+    examIdx++;
+    examAnswered = false;
+    saveExamProgress();
+    renderExam();
+  }
+}
+
+function explainQuestion(q) {
+  const answer = q.card.definition;
+  const prompt = baseReviewPrompt(q);
+  return `Correct idea: ${answer} Focus on how this answers "${prompt}" so you can recall it without seeing choices next time.`;
+}
+
+function baseReviewPrompt(q) {
+  let prompt = String(q.prompt).trim();
+  while (/^(Active recall|Again later):\s*/i.test(prompt)) {
+    prompt = prompt.replace(/^(Active recall|Again later):\s*/i, "").trim();
+  }
+  return prompt;
+}
+
+function normalizeSavedExamQuestion(q) {
+  if (!q || typeof q !== "object") return q;
+  if (q.idkReview) {
+    const later = /^Again later:/i.test(String(q.prompt));
+    q.prompt = `${later ? "Again later" : "Active recall"}: ${baseReviewPrompt(q)}`;
+    q.sourcePrompt = baseReviewPrompt({ prompt: q.sourcePrompt || q.prompt });
+  }
+  if (q.points === undefined) q.points = null;
+  if (q.response === undefined) q.response = null;
+  return q;
+}
+
+function makeIdkReviewQuestion(q, later) {
+  const prompt = baseReviewPrompt(q);
+  return {
+    index: q.index,
+    card: q.card,
+    kind: "write",
+    prompt: `${later ? "Again later" : "Active recall"}: ${prompt}`,
+    options: null,
+    points: null,
+    response: null,
+    idkReview: true,
+    sourcePrompt: q.prompt
+  };
+}
+
+const IDK_MAX_TOTAL = 5;   // a card's active-recall FRQ appears at most this many times total
+const IDK_MAX_PENDING = 3; // never queue more than this many un-answered copies ahead at once
+const IDK_GAP = 3;         // how many questions ahead the recall copy lands
+
+function activeRecallKey(q) {
+  return String(q.index) + "::" + q.card.definition;
+}
+
+// Count active-recall copies of a card. pendingOnly => only un-answered copies still ahead of us.
+function idkCopies(key, pendingOnly) {
+  let n = 0;
+  const start = pendingOnly ? examIdx + 1 : 0;
+  for (let i = start; i < examQuestions.length; i++) {
+    const x = examQuestions[i];
+    if (x.idkReview && activeRecallKey(x) === key && (!pendingOnly || !hasExamAnswer(x))) n++;
+  }
+  return n;
+}
+
+// Insert a single active-recall FRQ copy a few questions ahead, respecting the caps.
+function scheduleIdkReview(q) {
+  const key = activeRecallKey(q);
+  if (idkCopies(key, false) >= IDK_MAX_TOTAL) return false;   // retired — seen enough times
+  if (idkCopies(key, true) >= IDK_MAX_PENDING) return false;  // already queued enough ahead
+  const copy = makeIdkReviewQuestion(q, false);
+  const at = Math.min(examIdx + IDK_GAP, examQuestions.length);
+  examQuestions.splice(at, 0, copy);
+  saveExamProgress();
+  return true;
+}
+
+// Drop every pending un-answered active-recall copy of this card (used by the override).
+function clearFutureIdk(q) {
+  const key = activeRecallKey(q);
+  for (let i = examQuestions.length - 1; i > examIdx; i--) {
+    const x = examQuestions[i];
+    if (x.idkReview && activeRecallKey(x) === key && !hasExamAnswer(x)) examQuestions.splice(i, 1);
+  }
+  saveExamProgress();
+}
+
+function idkHtml() {
+  return `<button class="btn" id="idk">IDK</button>`;
+}
+
+function backHtml() {
+  return `<button class="btn" id="back" ${examCanGoBack() ? "" : "disabled"}>Back</button>`;
+}
+
+function wireBack() {
+  const back = document.getElementById("back");
+  if (back) back.onclick = goExamBack;
+}
+
+function wireIdk(q) {
+  const btn = document.getElementById("idk");
+  if (!btn) return;
+  btn.onclick = () => {
+    const panel = document.getElementById("idkpanel");
+    if (!panel) return;
+    panel.innerHTML = `
+      <div class="explain">
+        <span class="tag">Read this, then recall it</span>
+        <div>${esc(explainQuestion(q))}</div>
+        <button class="btn" id="idkdrill" style="margin-top:12px">Drill this now</button>
+      </div>`;
+    const drill = document.getElementById("idkdrill");
+    if (drill) drill.onclick = () => {
+      scheduleIdkReview(q);
+      finishExamQuestion(0);
+    };
+  };
+}
+
+function examHead(kindLabel) {
+  return `
+    <div class="progress"><div style="width:${(examIdx / examQuestions.length) * 100}%"></div></div>
+    <div class="counter">
+      <span>Question ${examIdx + 1} / ${examQuestions.length}</span>
+      <span class="score">Marathon score: ${examScore} · ${kindLabel}</span>
+    </div>
+    <div class="breakdown">
+      <span>A-to-Z active recall</span>
+      <button class="linkbtn" onclick="confirmResetExamProgress()">Restart from 0</button>
+    </div>`;
+}
+
+function finishExamQuestion(points) {
+  recordExamPoints(examQuestions[examIdx], points);
+  goExamForward();
+}
+
+function renderExam() {
+  if (cards.length < 4) { app.innerHTML = '<p style="color:var(--muted)">Need at least 4 cards for Marathon mode.</p>'; return; }
+  if (examIdx >= examQuestions.length) {
+    app.innerHTML = `<div class="done"><h2>Marathon complete</h2><div class="big">${examScore} / ${examQuestions.length}</div>
+      <div class="score">${Math.round((examScore / examQuestions.length) * 100)}% correct</div>
+      <div class="toolbar" style="margin-top:24px"><button class="btn" id="again">↺ Restart Marathon</button></div></div>`;
+    document.getElementById("again").onclick = resetExamProgress;
+    return;
+  }
+
+  const q = examQuestions[examIdx];
+  if (q.kind === "write") return renderExamWrite(q);
+  if (shouldUseExamSelectAll(q)) return renderExamSATA(q, splitList(q.card.definition));
+  renderExamMCQ(q);
+}
+
+function renderExamMCQ(q) {
+  const card = q.card;
+  const verdict = boolVerdict(card.definition);
+  let opts;
+  if (q.options) {
+    opts = shuffle(q.options);
+  } else if (verdict) {
+    opts = shuffle([{ text: "True", correct: verdict === "true" }, { text: "False", correct: verdict === "false" }]);
+  } else {
+    const distract = pickDistractors(q.index, 3);
+    opts = shuffle([
+      { text: card.definition, correct: true },
+      ...distract.map(i => ({ text: cards[i].definition, correct: false })),
+    ]);
+  }
+
+  const canAdvance = hasExamAnswer(q);
+  app.innerHTML = examHead("Multiple choice") + `
+    <div class="quiz-q">${esc(q.prompt)}</div>
+    <div class="options">${opts.map(o => {
+      const wasSelected = q.response && q.response.selected === o.text;
+      const classes = [
+        "opt",
+        canAdvance && o.correct ? "correct" : "",
+        canAdvance && wasSelected && !o.correct ? "wrong" : ""
+      ].filter(Boolean).join(" ");
+      return `<button class="${classes}" data-c="${o.correct ? 1 : 0}" data-text="${esc(o.text)}" ${canAdvance ? "disabled" : ""}>${esc(o.text)}</button>`;
+    }).join("")}</div>
+    <div class="quiz-foot"><span class="score" id="fb"></span><div class="toolbar" style="margin:0">${backHtml()}<button class="btn" id="next" style="visibility:${canAdvance ? "visible" : "hidden"}">Next ›</button>${idkHtml()}</div></div>
+    <div id="idkpanel"></div>`;
+  wireBack();
+  wireIdk(q);
+  if (canAdvance) document.getElementById("fb").textContent = q.response && q.response.right ? "Correct" : "Answer: " + card.definition;
+  const next = document.getElementById("next");
+  if (next) next.onclick = goExamForward;
+  document.querySelectorAll(".opt").forEach(btn => {
+    btn.onclick = () => {
+      if (examAnswered) return;
+      examAnswered = true;
+      const right = btn.dataset.c === "1";
+      recordExamResponse(q, { type: "mcq", selected: btn.dataset.text, right });
+      document.querySelectorAll(".opt").forEach(b => {
+        b.disabled = true;
+        if (b.dataset.c === "1") b.classList.add("correct");
+        else if (b === btn) b.classList.add("wrong");
+      });
+      document.getElementById("fb").textContent = right ? "Correct" : "Answer: " + card.definition;
+      next.style.visibility = "visible";
+      next.onclick = () => finishExamQuestion(right ? 1 : 0);
+    };
+  });
+}
+
+function renderExamSATA(q, items) {
+  const correctSet = new Set(items.map(s => s.toLowerCase()));
+  const distract = shuffle(listPool.filter(x => !correctSet.has(x.toLowerCase()))).slice(0, Math.min(5, Math.max(3, items.length)));
+  const opts = shuffle([
+    ...items.map(t => ({ text: t, correct: true })),
+    ...distract.map(t => ({ text: t, correct: false })),
+  ]);
+  const canAdvance = hasExamAnswer(q);
+  app.innerHTML = examHead("Select all") + `
+    <div class="quiz-q">${esc(q.prompt)}</div>
+    <div class="sata-hint">Select ALL that apply (${items.length} correct)</div>
+    <div class="options">${opts.map(o => {
+      const selected = q.response && q.response.selected && q.response.selected.includes(o.text);
+      const classes = [
+        "opt",
+        canAdvance && o.correct && selected ? "correct" : "",
+        canAdvance && o.correct && !selected ? "miss" : "",
+        canAdvance && !o.correct && selected ? "wrong" : "",
+        !canAdvance && selected ? "sel" : ""
+      ].filter(Boolean).join(" ");
+      return `<button class="${classes}" data-c="${o.correct ? 1 : 0}" data-text="${esc(o.text)}" ${canAdvance ? "disabled" : ""}>${esc(o.text)}</button>`;
+    }).join("")}</div>
+    <div class="quiz-foot"><span class="score" id="fb"></span><div class="toolbar" style="margin:0">${backHtml()}<button class="btn" id="act">${canAdvance ? "Next ›" : "Submit"}</button>${idkHtml()}</div></div>
+    <div id="idkpanel"></div>`;
+  wireBack();
+  wireIdk(q);
+  let submitted = false;
+  const act = document.getElementById("act");
+  if (canAdvance) document.getElementById("fb").textContent = q.response && q.response.perfect ? "All correct" : "Solid = correct, dashed = missed, red = wrong";
+  document.querySelectorAll(".opt").forEach(btn => btn.onclick = () => {
+    if (submitted) return;
+    btn.classList.toggle("sel");
+  });
+  act.onclick = () => {
+    if (canAdvance && !submitted) return goExamForward();
+    if (submitted) return finishExamQuestion(document.getElementById("fb").dataset.points === "1" ? 1 : 0);
+    submitted = true;
+    let perfect = true;
+    const selected = [];
+    document.querySelectorAll(".opt").forEach(b => {
+      const isC = b.dataset.c === "1", isSel = b.classList.contains("sel");
+      if (isSel) selected.push(b.dataset.text);
+      b.disabled = true; b.classList.remove("sel");
+      if (isC && isSel) b.classList.add("correct");
+      else if (isC && !isSel) { b.classList.add("miss"); perfect = false; }
+      else if (!isC && isSel) { b.classList.add("wrong"); perfect = false; }
+    });
+    const fb = document.getElementById("fb");
+    fb.textContent = perfect ? "All correct" : "Solid = correct, dashed = missed, red = wrong";
+    fb.dataset.points = perfect ? "1" : "0";
+    recordExamResponse(q, { type: "sata", selected, perfect });
+    act.textContent = "Next ›";
+  };
+}
+
+function renderExamWrite(q) {
+  const card = q.card;
+  const canAdvance = hasExamAnswer(q);
+  app.innerHTML = examHead("Written") + `
+    <div class="write-q">${esc(q.prompt)}</div>
+    <textarea class="write-in" id="ans" placeholder="Type the answer, then Enter to check (Shift+Enter for newline)" ${canAdvance ? "disabled" : ""}>${esc(q.response && q.response.answer ? q.response.answer : "")}</textarea>
+    <div id="result">${canAdvance && q.response ? `
+      <div class="verdict ${q.response.verdict === "ok" ? "ok" : q.response.verdict === "close" ? "close" : "no"}">
+        <span class="tag">${q.response.verdict === "ok" ? "Correct" : q.response.verdict === "close" ? "Close" : "Incorrect"}</span>
+        <div class="ans">Answer: <b>${esc(card.definition)}</b></div>
+        <div class="yours">You wrote: ${esc(q.response.answer) || "<i>(blank)</i>"}</div>
+      </div>` : ""}</div>
+    <div class="quiz-foot"><span></span><div class="toolbar" style="margin:0">${backHtml()}<button class="btn" id="act">${canAdvance ? "Next ›" : "Check"}</button>${idkHtml()}</div></div>
+    <div id="idkpanel"></div>`;
+  wireBack();
+  wireIdk(q);
+  const ta = document.getElementById("ans"); ta.focus();
+  const act = document.getElementById("act");
+  let checked = false, points = 0, verdictResult = null, overridden = false;
+  // Schedule the next recall copy only when the user actually moves on from a missed FRQ.
+  function moveOn() {
+    if (q.idkReview && !overridden && verdictResult !== "ok") scheduleIdkReview(q);
+    finishExamQuestion(points);
+  }
+  function reveal() {
+    if (checked) return;
+    checked = true;
+    const verdict = grade(ta.value, card.definition);
+    verdictResult = verdict;
+    points = verdict === "ok" ? 1 : 0;
+    recordExamResponse(q, { type: "write", answer: ta.value, verdict });
+    const comingBack = q.idkReview && verdict !== "ok";
+    const cls = verdict === "ok" ? "ok" : verdict === "close" ? "close" : "no";
+    const tag = verdict === "ok" ? "Correct" : verdict === "close" ? (comingBack ? "Close — coming back soon" : "Close") : (comingBack ? "Incorrect — coming back soon" : "Incorrect");
+    ta.disabled = true;
+    const overrideBtn = verdict === "ok" ? "" : `<button class="btn" id="override" style="margin-top:10px">I was actually right →</button>`;
+    document.getElementById("result").innerHTML = `
+      <div class="verdict ${cls}">
+        <span class="tag">${tag}</span>
+        <div class="ans">Answer: <b>${esc(card.definition)}</b></div>
+        <div class="yours">You wrote: ${esc(ta.value) || "<i>(blank)</i>"}</div>
+        ${overrideBtn}
+      </div>`;
+    const ov = document.getElementById("override");
+    if (ov) ov.onclick = () => {
+      points = 1;
+      overridden = true;
+      verdictResult = "ok";
+      recordExamResponse(q, { type: "write", answer: ta.value, verdict: "ok" });
+      if (q.idkReview) clearFutureIdk(q);   // got it right after all — drop the pending recalls
+      const v = document.querySelector(".verdict");
+      v.className = "verdict ok";
+      v.querySelector(".tag").textContent = "Correct";
+      ov.remove();
+    };
+    act.textContent = "Next ›"; act.focus();
+  }
+  act.onclick = () => { canAdvance && !checked ? goExamForward() : checked ? moveOn() : reveal(); };
+  ta.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); checked ? moveOn() : reveal(); }
+  });
 }
 
 function esc(s) { return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
@@ -725,7 +1724,10 @@ function renderLearn() {
   // ---- Level 1: multiple choice ----
   if (level === 1) {
     let opts;
-    if (isBool(card.definition)) {
+    const curated = curatedOptionsForCard(card);
+    if (curated.length) {
+      opts = shuffle(curated);
+    } else if (isBool(card.definition)) {
       opts = shuffle([{ text: "True", correct: /true/i.test(card.definition) },
                       { text: "False", correct: /false/i.test(card.definition) }]);
     } else {
@@ -734,7 +1736,7 @@ function renderLearn() {
                       ...d.map(i => ({ text: cards[i].definition, correct: false }))]);
     }
     app.innerHTML = head + `
-      <div class="quiz-q">${esc(card.term)}</div>
+      <div class="quiz-q">${esc(questionPrompt(card, "quiz"))}</div>
       <div class="options">${opts.map(o => `<button class="opt" data-c="${o.correct ? 1 : 0}">${esc(o.text)}</button>`).join("")}</div>
       <div class="quiz-foot"><span class="score" id="fb"></span><button class="btn" id="nx" style="visibility:hidden">Next ›</button></div>`;
     let ansd = false;
@@ -755,7 +1757,7 @@ function renderLearn() {
 
   // ---- Level 2: written ----
   app.innerHTML = head + `
-    <div class="write-q">${esc(card.term)}</div>
+    <div class="write-q">${esc(questionPrompt(card, "write"))}</div>
     <textarea class="write-in" id="ans" placeholder="Type the answer, then Enter to check (Shift+Enter for newline)"></textarea>
     <div id="result"></div>
     <div class="quiz-foot"><span></span><button class="btn" id="act">Check</button></div>`;
@@ -790,36 +1792,112 @@ function renderLearn() {
   act.addEventListener("keydown", e => { if (e.key === "Enter" && checked) { e.preventDefault(); learnNext(ci, resultLevel); } });
 }
 
-// ---- FACTS (true/false statements as a study reference sheet) ----
+// ---- FACTS (organized study reference sheet) ----
+const FACT_TOPICS = [
+  {
+    title: "Visualization Goals and Data Types",
+    desc: "Start here: these facts explain what visualization is for, how analysis changes with the audience, and the major kinds of data you may need to show.",
+    keywords: ["definition adopted", "exploratory", "explanatory", "quality", "numerical", "categorical", "elimainate", "focus"]
+  },
+  {
+    title: "Scales, Coordinates, and Color",
+    desc: "These concepts control how data turns into marks on the screen. They affect position, shape, color, distortion, and whether the audience reads the values correctly.",
+    keywords: ["scale", "scales", "coordinate", "cartesian", "polar", "axis", "axes", "log", "square-root", "color", "colors", "projection", "projections", "conformal", "longitude", "latitude", "altitude"]
+  },
+  {
+    title: "Amounts and Proportions",
+    desc: "Use this group when deciding how to compare sizes, totals, parts of a whole, or nested categories.",
+    keywords: ["amount", "heatmap", "bar", "bars", "pie", "proportion", "proportions", "stacked", "grouped", "mosaic", "treemap", "parallel set", "nested"]
+  },
+  {
+    title: "Distributions",
+    desc: "Distribution charts show the shape, spread, and frequency of measurements. The key choice is whether you need a simple public-facing summary or a more faithful view of the data.",
+    keywords: ["distribution", "histogram", "density", "densities", "boxplot", "box plot", "violin", "strip", "sina", "sinaplot", "ridgeline", "rigeline", "cumulative", "quantile", "jitter", "overplotting"]
+  },
+  {
+    title: "Relationships, Associations, and Dimensionality",
+    desc: "These facts are about comparing variables with each other, spotting association, and handling datasets with many measurements at once.",
+    keywords: ["quantitative", "scatter", "bubble", "correlation", "correlogram", "dimension", "component", "pca", "association", "relations", "variables"]
+  },
+  {
+    title: "Time, Paired, and Geospatial Data",
+    desc: "These chart types depend on structure: time has order, paired data compares related measurements, and maps must deal with location and projection distortion.",
+    keywords: ["time", "series", "line graph", "slope", "pair", "paired", "x = y", "geospatial", "map", "choropleth", "cartogram"]
+  }
+];
+
+function factText(c) {
+  const verdict = boolVerdict(c.definition);
+  if (!verdict) return c.definition;
+  const corr = boolCorrection(c.definition);
+  if (verdict === "true") return "True.";
+  return corr ? `False. Correction: ${corr}` : "False.";
+}
+
+function factKind(c) {
+  const verdict = boolVerdict(c.definition);
+  if (verdict === "true") return "t";
+  if (verdict === "false") return "f";
+  return "";
+}
+
+function matchesTopic(card, topic) {
+  const text = `${card.term} ${card.definition}`.toLowerCase();
+  return topic.keywords.some(keyword => text.includes(keyword));
+}
+
+function groupedFacts() {
+  const used = new Set();
+  const groups = FACT_TOPICS.map(topic => {
+    const items = cards
+      .map((card, index) => ({ card, index }))
+      .filter(item => !used.has(item.index) && matchesTopic(item.card, topic));
+    items.forEach(item => used.add(item.index));
+    return { ...topic, items };
+  }).filter(group => group.items.length);
+
+  const remaining = cards
+    .map((card, index) => ({ card, index }))
+    .filter(item => !used.has(item.index));
+  if (remaining.length) {
+    groups.push({
+      title: "Other Key Facts",
+      desc: "These remaining cards are still useful, but they do not fit cleanly into one of the larger subject groups above.",
+      items: remaining
+    });
+  }
+  return groups;
+}
+
 function renderFacts() {
-  const tf = cards.map(c => ({ c, v: boolVerdict(c.definition) })).filter(x => x.v);
-  if (!tf.length) { app.innerHTML = '<p style="color:var(--muted)">No true/false statements in this deck.</p>'; return; }
-  const trues = tf.filter(x => x.v === "true");
-  const falses = tf.filter(x => x.v === "false");
-  const factHtml = (x, kind) => {
-    const corr = boolCorrection(x.c.definition);
-    const note = corr ? `<span class="corr">${kind === "f" ? "✔ actually: " : "→ "}${esc(corr)}</span>` : "";
-    return `<div class="fact ${kind}">${esc(x.c.term)}${note}</div>`;
+  if (!cards.length) { app.innerHTML = '<p style="color:var(--muted)">No facts in this deck.</p>'; return; }
+  const groups = groupedFacts();
+  const factHtml = ({ card }) => {
+    const kind = factKind(card);
+    return `
+      <div class="fact ${kind}">
+        <div class="fact-term">${esc(card.term)}</div>
+        <div class="fact-def">${esc(factText(card))}</div>
+      </div>`;
   };
   app.innerHTML = `
     <div class="facts-intro">
-      Know these before you drill. Every true/false statement in the deck, pulled out as a fact sheet.
-      The <b>red</b> ones are <b>false</b> — they're misconceptions, so learn the opposite.
+      Know these before you drill. The deck is organized by subject so related ideas sit together.
+      Green marks are true statements, and red marks are false statements with the correction written underneath.
     </div>
-    <div class="facts-sec">
-      <h3>✅ TRUE — ${trues.length} statements that ARE correct</h3>
-      ${trues.map(x => factHtml(x, "t")).join("")}
-    </div>
-    <div class="facts-sec">
-      <h3>❌ FALSE — ${falses.length} statements that are NOT true</h3>
-      ${falses.map(x => factHtml(x, "f")).join("")}
-    </div>`;
+    ${groups.map(group => `
+      <div class="facts-sec">
+        <h3>${esc(group.title)}</h3>
+        <p class="topic-desc">${esc(group.desc)}</p>
+        ${group.items.map(factHtml).join("")}
+      </div>`).join("")}`;
 }
 
 function render() {
   if (mode === "cards") return renderCards();
   if (mode === "learn") { buildLearn(); return renderLearn(); }
   if (mode === "write") { buildWrite(); return renderWrite(); }
+  if (mode === "marathon") { buildExam(); return renderExam(); }
   if (mode === "facts") return renderFacts();
   buildQuiz(); renderQuiz();
 }
